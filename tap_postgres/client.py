@@ -203,6 +203,62 @@ class PostgresStream(SQLStream):
         """Return the maximum number of records to fetch in a single query."""
         return self.config.get("max_record_count")
 
+    def _should_use_smart_pagination(self) -> bool:
+        """Check if this table should use smart pagination for duplicate replication keys.
+        
+        Smart pagination prevents infinite loops when a replication key value appears in 
+        more rows than the max_record_count limit. Configure problematic tables in the
+        'problematic_tables' config array.
+        """
+        problematic_tables = self.config.get("problematic_tables", [])
+        return self.fully_qualified_name in problematic_tables
+
+    def _calculate_smart_limit(
+        self, 
+        table, 
+        replication_key_col, 
+        start_val, 
+        end_val=None, 
+        buffer_time=None
+    ) -> int | None:
+        """Calculate intelligent limit for tables with duplicate replication key values.
+        
+        Args:
+            table: SQLAlchemy table object
+            replication_key_col: The replication key column
+            start_val: Starting replication key value
+            end_val: Optional end date filter
+            buffer_time: Optional buffer time filter
+            
+        Returns:
+            Intelligent limit or None if no adjustment needed
+        """
+        if not start_val or not self.max_record_count():
+            return None
+            
+        # Build count query for rows with the exact start_val
+        count_query = sa.select(sa.func.count()).select_from(table).where(
+            replication_key_col == start_val
+        )
+        
+        # Apply same filters as main query
+        if end_val is not None:
+            count_query = count_query.where(replication_key_col <= end_val)
+        if buffer_time is not None:
+            count_query = count_query.where(replication_key_col < buffer_time)
+            
+        with self.connector._connect() as conn:
+            duplicate_count = conn.execute(count_query).scalar()
+        
+        self.logger.info(f"Duplicate count: {duplicate_count}")
+            
+        # If duplicate count exceeds max_record_count, use count + 1 to ensure we 
+        # grab all duplicates plus one more to advance the state
+        if duplicate_count > self.max_record_count():
+            return duplicate_count + 1
+            
+        return None
+
     # Get records from stream
     def get_records(self, context: Context | None) -> t.Iterable[dict[str, t.Any]]:
         """Return a generator of record-type dictionary objects.
@@ -233,6 +289,7 @@ class PostgresStream(SQLStream):
         )
         query = table.select()
 
+        smart_limit = None
         if self.replication_key:
             replication_key_col = table.columns[self.replication_key]
             order_by = (
@@ -245,6 +302,7 @@ class PostgresStream(SQLStream):
             start_val = self.get_starting_replication_key_value(context)
             end_val = self.config.get("end_date")
             buffer_seconds = self.config.get("replication_key_buffer_seconds")
+            buffer_time = None
 
             if start_val:
                 query = query.where(replication_key_col >= start_val)
@@ -255,6 +313,15 @@ class PostgresStream(SQLStream):
                 buffer_time = current_time - datetime.timedelta(seconds=buffer_seconds)
                 query = query.where(replication_key_col < buffer_time)
 
+            # Calculate smart limit for problematic tables
+            if self._should_use_smart_pagination():
+                self.logger.info(f"Using smart pagination for table '{self.fully_qualified_name}'")
+                smart_limit = self._calculate_smart_limit(
+                    table, replication_key_col, start_val, end_val, buffer_time
+                )
+            else:
+                self.logger.info(f"Not using smart pagination for table '{self.fully_qualified_name}'")
+
         if self.ABORT_AT_RECORD_COUNT is not None:
             # Limit record count to one greater than the abort threshold. This ensures
             # `MaxRecordsLimitException` exception is properly raised by caller
@@ -262,7 +329,15 @@ class PostgresStream(SQLStream):
             # processed.
             query = query.limit(self.ABORT_AT_RECORD_COUNT + 1)
 
-        if self.max_record_count():
+        # Apply intelligent limit if calculated, otherwise use standard limit
+        if smart_limit is not None:
+            self.logger.info(
+                f"Using smart pagination for table '{self.fully_qualified_name}': "
+                f"limit adjusted to {smart_limit} (from {self.max_record_count()}) "
+                f"to handle duplicate replication key values"
+            )
+            query = query.limit(smart_limit)
+        elif self.max_record_count():
             query = query.limit(self.max_record_count())
 
         with self.connector._connect() as conn:
