@@ -199,65 +199,58 @@ class PostgresStream(SQLStream):
     # JSONB Objects won't be selected without type_conformance_level to ROOT_ONLY
     TYPE_CONFORMANCE_LEVEL = TypeConformanceLevel.ROOT_ONLY
 
+    SPECIAL_STATE_DELIMITER = "::"
+
     def max_record_count(self) -> int | None:
         """Return the maximum number of records to fetch in a single query."""
         return self.config.get("max_record_count")
 
-    def _should_use_smart_pagination(self) -> bool:
-        """Check if this table should use smart pagination for duplicate replication keys.
+    def _parse_state(self, state_value: str | None) -> tuple[str | None, str | None]:
+        """Parses state value
         
-        Smart pagination prevents infinite loops when a replication key value appears in 
-        more rows than the max_record_count limit. Configure problematic tables in the
-        'problematic_tables' config array.
+        Args:
+            state_value: State value that may be in special format with delimiter
+            
+        Returns:
+            Tuple of (replication_key_value, last_id) or (state_value, None) for normal state
         """
-        problematic_tables = self.config.get("problematic_tables", [])
-        return self.fully_qualified_name in problematic_tables
-
-    def _calculate_smart_limit(
-        self, 
-        table, 
-        replication_key_col, 
-        start_val, 
-        end_val=None, 
-        buffer_time=None
-    ) -> int | None:
-        """Calculate intelligent limit for tables with duplicate replication key values.
+        if not state_value or not isinstance(state_value, str):
+            return state_value, None
+            
+        # Check if this is a special state (contains delimiter)
+        if self.SPECIAL_STATE_DELIMITER in state_value:
+            try:
+                rk_value, last_id = state_value.rsplit(self.SPECIAL_STATE_DELIMITER, 1)
+                return rk_value, last_id
+            except ValueError:
+                # if parsing fails, throw an error
+                raise ValueError(f"Failed to parse special state: {state_value}")
+        
+        return state_value, None
+    
+    def _get_id_column(self, table) -> sa.Column | None:
+        """Get the ID column for secondary ordering.
         
         Args:
             table: SQLAlchemy table object
-            replication_key_col: The replication key column
-            start_val: Starting replication key value
-            end_val: Optional end date filter
-            buffer_time: Optional buffer time filter
             
         Returns:
-            Intelligent limit or None if no adjustment needed
+            ID column or None if not found
         """
-        if not start_val or not self.max_record_count():
-            return None
-            
-        # Build count query for rows with the exact start_val
-        count_query = sa.select(sa.func.count()).select_from(table).where(
-            replication_key_col == start_val
-        )
+        # Try common ID column names
+        id_column_names = ['id', 'ID', 'Id', '_id', 'pk', 'guid', 'uuid']
         
-        # Apply same filters as main query
-        if end_val is not None:
-            count_query = count_query.where(replication_key_col <= end_val)
-        if buffer_time is not None:
-            count_query = count_query.where(replication_key_col < buffer_time)
-            
-        with self.connector._connect() as conn:
-            duplicate_count = conn.execute(count_query).scalar()
+        for col_name in id_column_names:
+            if col_name in table.columns:
+                return table.columns[col_name]
         
-        self.logger.info(f"Duplicate count: {duplicate_count}")
-            
-        # If duplicate count exceeds max_record_count, use count + 1 to ensure we 
-        # grab all duplicates plus one more to advance the state
-        if duplicate_count > self.max_record_count():
-            return duplicate_count + 1
-            
-        return None
+        # If no common ID column found, try to find primary key
+        primary_key_cols = list(table.primary_key.columns)
+        if len(primary_key_cols) == 1:
+            return primary_key_cols[0]
+        
+        # throw error if no id column found
+        raise ValueError(f"No suitable ID column found for table {self.fully_qualified_name}. Special state pagination may not work correctly.")
 
     # Get records from stream
     def get_records(self, context: Context | None) -> t.Iterable[dict[str, t.Any]]:
@@ -289,38 +282,29 @@ class PostgresStream(SQLStream):
         )
         query = table.select()
 
-        smart_limit = None
         if self.replication_key:
+            id_column = self._get_id_column(table)
             replication_key_col = table.columns[self.replication_key]
-            order_by = (
-                sa.nulls_first(replication_key_col.asc())
-                if self.supports_nulls_first
-                else replication_key_col.asc()
-            )
-            query = query.order_by(order_by)
+
+            # Always order by replication key and id column
+            query = query.order_by(replication_key_col.asc(), id_column.asc())
 
             start_val = self.get_starting_replication_key_value(context)
             end_val = self.config.get("end_date")
             buffer_seconds = self.config.get("replication_key_buffer_seconds")
-            buffer_time = None
 
+            replication_key_value, last_id = self._parse_state(start_val)
+
+            if last_id is not None:
+                query = query.where(id_column > last_id)
             if start_val:
-                query = query.where(replication_key_col >= start_val)
+                query = query.where(replication_key_col >= replication_key_value)
             if end_val is not None:
                 query = query.where(replication_key_col <= end_val)
             if buffer_seconds is not None:
                 current_time = datetime.datetime.now(datetime.timezone.utc)
                 buffer_time = current_time - datetime.timedelta(seconds=buffer_seconds)
                 query = query.where(replication_key_col < buffer_time)
-
-            # Calculate smart limit for problematic tables
-            if self._should_use_smart_pagination():
-                self.logger.info(f"Using smart pagination for table '{self.fully_qualified_name}'")
-                smart_limit = self._calculate_smart_limit(
-                    table, replication_key_col, start_val, end_val, buffer_time
-                )
-            else:
-                self.logger.info(f"Not using smart pagination for table '{self.fully_qualified_name}'")
 
         if self.ABORT_AT_RECORD_COUNT is not None:
             # Limit record count to one greater than the abort threshold. This ensures
@@ -329,15 +313,7 @@ class PostgresStream(SQLStream):
             # processed.
             query = query.limit(self.ABORT_AT_RECORD_COUNT + 1)
 
-        # Apply intelligent limit if calculated, otherwise use standard limit
-        if smart_limit is not None:
-            self.logger.info(
-                f"Using smart pagination for table '{self.fully_qualified_name}': "
-                f"limit adjusted to {smart_limit} (from {self.max_record_count()}) "
-                f"to handle duplicate replication key values"
-            )
-            query = query.limit(smart_limit)
-        elif self.max_record_count():
+        if self.max_record_count():
             query = query.limit(self.max_record_count())
 
         with self.connector._connect() as conn:
@@ -349,6 +325,42 @@ class PostgresStream(SQLStream):
                     # Record filtered out during post_process()
                     continue
                 yield transformed_record
+
+    def _increment_stream_state(
+        self,
+        latest_record: dict[str, t.Any],
+        *,
+        context: Context | None = None,
+    ) -> None:
+        # This also creates a state entry if one does not yet exist:
+        state_dict = self.get_context_state(context)
+
+        # hack the state to be a special state
+        replication_key_value = latest_record[self.replication_key]
+        id_value = latest_record[self._get_id_column().name]
+        latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
+
+        self.logger.info(f"Hacked state to be a special state: {latest_record}")
+
+        # Advance state bookmark values if applicable
+        if latest_record and self.replication_method == 'INCREMENTAL':
+            if not self.replication_key:
+                msg = (
+                    f"Could not detect replication key for '{self.name}' "
+                    f"stream(replication method={self.replication_method})"
+                )
+                raise ValueError(msg)
+            treat_as_sorted = self.is_sorted
+            if not treat_as_sorted and self.state_partitioning_keys is not None:
+                # Streams with custom state partitioning are not resumable.
+                treat_as_sorted = False
+            increment_state(
+                state_dict,
+                replication_key=self.replication_key,
+                latest_record=latest_record,
+                is_sorted=treat_as_sorted,
+                check_sorted=self.check_sorted,
+            )
 
 
 class PostgresLogBasedStream(SQLStream):
