@@ -351,7 +351,7 @@ class PostgresStream(SQLStream):
         
         latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
 
-        self.logger.info(f"Hacked state to be a special state: {latest_record}")
+        self.logger.info(f"Hacked state to be a special state: {latest_record[self.replication_key]}")
 
         # Advance state bookmark values if applicable
         if latest_record and self.replication_method == 'INCREMENTAL':
