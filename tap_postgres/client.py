@@ -20,7 +20,7 @@ from psycopg2 import extras
 from singer_sdk import SQLConnector, SQLStream
 from singer_sdk.connectors.sql import SQLToJSONSchema
 from singer_sdk.helpers._state import increment_state
-from singer_sdk.helpers._typing import TypeConformanceLevel
+from singer_sdk.helpers._typing import TypeConformanceLevel, to_json_compatible
 from sqlalchemy.dialects import postgresql
 
 if t.TYPE_CHECKING:
@@ -337,19 +337,19 @@ class PostgresStream(SQLStream):
         # This also creates a state entry if one does not yet exist:
         state_dict = self.get_context_state(context)
 
-        # hack the state to be a special state
-        replication_key_value = latest_record[self.replication_key]
-        
-        # Get the table to pass to _get_id_column
         selected_column_names = self.get_selected_schema()["properties"].keys()
         table = self.connector.get_table(
             full_table_name=self.fully_qualified_name,
             column_names=selected_column_names,
         )
         id_column = self._get_id_column(table)
-        id_value = latest_record[id_column.name]
+
+        # hack the state to be a special state
+        replication_key_value = to_json_compatible(latest_record[self.replication_key])
+        id_value = to_json_compatible(latest_record[id_column.name])
         
         latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
+        latest_record[id_column.name] = None
 
         self.logger.info(f"Hacked state to be a special state: {latest_record[self.replication_key]}")
 
