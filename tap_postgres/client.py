@@ -353,7 +353,7 @@ class PostgresStream(SQLStream):
         self.logger.info(f"Replication key value: '{replication_key_value}' (type: {type(replication_key_value)})")
         self.logger.info(f"ID value: '{id_value}' (type: {type(id_value)})")
         
-        latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
+        # latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
 
         self.logger.info(f"Hacked state to be a special state: '{latest_record[self.replication_key]}'")
 
