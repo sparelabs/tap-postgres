@@ -348,10 +348,14 @@ class PostgresStream(SQLStream):
         replication_key_value = to_json_compatible(latest_record[self.replication_key])
         id_value = to_json_compatible(latest_record[id_column.name])
         
+        # Debug logging
+        self.logger.info(f"Delimiter: '{self.SPECIAL_STATE_DELIMITER}' (length: {len(self.SPECIAL_STATE_DELIMITER)})")
+        self.logger.info(f"Replication key value: '{replication_key_value}' (type: {type(replication_key_value)})")
+        self.logger.info(f"ID value: '{id_value}' (type: {type(id_value)})")
+        
         latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
-        latest_record[id_column.name] = None
 
-        self.logger.info(f"Hacked state to be a special state: {latest_record[self.replication_key]}")
+        self.logger.info(f"Hacked state to be a special state: '{latest_record[self.replication_key]}'")
 
         # Advance state bookmark values if applicable
         if latest_record and self.replication_method == 'INCREMENTAL':
