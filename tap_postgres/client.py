@@ -295,6 +295,8 @@ class PostgresStream(SQLStream):
 
             replication_key_value, last_id = self._parse_state(start_val)
 
+            self.logger.info(f"Replication key value: {replication_key_value}, Last ID: {last_id}")
+
             if last_id is not None:
                 query = query.where(id_column > last_id)
             if start_val:
@@ -337,7 +339,16 @@ class PostgresStream(SQLStream):
 
         # hack the state to be a special state
         replication_key_value = latest_record[self.replication_key]
-        id_value = latest_record[self._get_id_column().name]
+        
+        # Get the table to pass to _get_id_column
+        selected_column_names = self.get_selected_schema()["properties"].keys()
+        table = self.connector.get_table(
+            full_table_name=self.fully_qualified_name,
+            column_names=selected_column_names,
+        )
+        id_column = self._get_id_column(table)
+        id_value = latest_record[id_column.name]
+        
         latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
 
         self.logger.info(f"Hacked state to be a special state: {latest_record}")
