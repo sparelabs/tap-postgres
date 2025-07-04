@@ -199,7 +199,7 @@ class PostgresStream(SQLStream):
     # JSONB Objects won't be selected without type_conformance_level to ROOT_ONLY
     TYPE_CONFORMANCE_LEVEL = TypeConformanceLevel.ROOT_ONLY
 
-    SPECIAL_STATE_DELIMITER = "::"
+    SPECIAL_STATE_DELIMITER = "||"
 
     def max_record_count(self) -> int | None:
         """Return the maximum number of records to fetch in a single query."""
