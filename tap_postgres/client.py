@@ -297,7 +297,7 @@ class PostgresStream(SQLStream):
             if last_id is not None and replication_key_value is not None:
                 # Use tuple comparison for more efficient pagination
                 query = query.where(
-                    sa.tuple_(replication_key_col, id_column) > sa.tuple_(replication_key_value, last_id)
+                    sa.tuple_(replication_key_col, id_column) >= sa.tuple_(replication_key_value, last_id)
                 )
             elif replication_key_value is not None:
                 # Fallback to simple replication key comparison if no last_id
@@ -320,6 +320,8 @@ class PostgresStream(SQLStream):
             query = query.limit(self.max_record_count())
 
         with self.connector._connect() as conn:
+            if self.name == 'public-CancellationReason':
+                queryResult = conn.execute(query).mappings()
             for record in conn.execute(query).mappings():
                 # TODO: Standardize record mapping type
                 # https://github.com/meltano/sdk/issues/2096
