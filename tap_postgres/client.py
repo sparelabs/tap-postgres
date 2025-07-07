@@ -381,9 +381,9 @@ class PostgresStream(SQLStream):
 
     def _increment_stream_state(
         self,
-        latest_record: types.Record,
+        latest_record: dict[str, t.Any],
         *,
-        context: types.Context | None = None,
+        context: Context | None = None,
     ) -> None:
         # This also creates a state entry if one does not yet exist:
         state_dict = self.get_context_state(context)
