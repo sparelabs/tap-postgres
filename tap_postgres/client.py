@@ -322,6 +322,8 @@ class PostgresStream(SQLStream):
         with self.connector._connect() as conn:
             if self.name == 'public-CancellationReason':
                 queryResult = conn.execute(query).mappings()
+                self.logger.info(f"queryResult: {queryResult}")
+                self.logger.info(f"query: {query.statement.compile(compile_kwargs={'literal_binds': True})}")
             for record in conn.execute(query).mappings():
                 # TODO: Standardize record mapping type
                 # https://github.com/meltano/sdk/issues/2096
