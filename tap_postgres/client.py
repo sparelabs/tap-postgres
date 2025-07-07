@@ -410,6 +410,29 @@ class PostgresStream(SQLStream):
                 check_sorted=self.check_sorted,
             )
 
+    def compare_start_date(self, value: str, start_date_value: str) -> str:
+        """Compare a bookmark value to a start date and return the most recent value.
+
+        If the replication key is a datetime-formatted string, this method will parse
+        the value and compare it to the start date. Otherwise, the bookmark value is
+        returned.
+
+        If the tap uses a non-datetime replication key (e.g. an UNIX timestamp), the
+        developer is encouraged to override this method to provide custom logic for
+        comparing the bookmark value to the start date.
+
+        Args:
+            value: The replication key value.
+            start_date_value: The start date value from the config.
+
+        Returns:
+            The most recent value between the bookmark and start date.
+        """
+        parsed_value, last_id = self._parse_state(value)
+
+        self.logger.info(f"value: {value}, parsed_value: {parsed_value}, start_date_value: {start_date_value}")
+
+        return max(parsed_value, start_date_value)
 
 class PostgresLogBasedStream(SQLStream):
     """Stream class for Postgres log-based streams."""
