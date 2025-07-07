@@ -228,6 +228,9 @@ class PostgresStream(SQLStream):
         
         return state_value, None
     
+    def _get_id_column_name(self) -> str:
+        return self.config.get("replication_tie_breaker_column") or 'id'
+    
     def _get_id_column(self, table) -> sa.Column:
         """Get the ID column for secondary ordering.
         
@@ -237,7 +240,7 @@ class PostgresStream(SQLStream):
         Returns:
             ID column or None if not found
         """
-        id_column_name = self.config.get("replication_tie_breaker_column") or 'id'
+        id_column_name = self._get_id_column_name()
 
         table_column = table.columns.get(id_column_name)
 
@@ -326,32 +329,69 @@ class PostgresStream(SQLStream):
                     continue
                 yield transformed_record
 
+    # def _increment_stream_state(
+    #     self,
+    #     latest_record: types.Record,
+    #     *,
+    #     context: types.Context | None = None,
+    # ) -> None:
+    #     """Update state of stream or partition with data from the provided record.
+
+    #     Raises `InvalidStreamSortException` is `self.is_sorted = True` and unsorted data
+    #     is detected.
+
+    #     Note: The default implementation does not advance any bookmarks unless
+    #     `self.replication_method == 'INCREMENTAL'.
+
+    #     Args:
+    #         latest_record: TODO
+    #         context: Stream partition or context dictionary.
+
+    #     Raises:
+    #         ValueError: TODO
+    #     """
+    #     # This also creates a state entry if one does not yet exist:
+    #     state_dict = self.get_context_state(context)
+
+    #     # Advance state bookmark values if applicable
+    #     if latest_record and self.replication_method == "INCREMENTAL":
+    #         if not self.replication_key:
+    #             msg = (
+    #                 f"Could not detect replication key for '{self.name}' "
+    #                 f"stream(replication method={self.replication_method})"
+    #             )
+    #             raise ValueError(msg)
+    #         treat_as_sorted = self.is_sorted
+    #         if not treat_as_sorted and self.state_partitioning_keys is not None:
+    #             # Streams with custom state partitioning are not resumable.
+    #             treat_as_sorted = False
+    #         self.logger.info(f"Incrementing state for {self.name} with record {latest_record}")
+    #         increment_state(
+    #             state_dict,
+    #             replication_key=self.replication_key,
+    #             latest_record=latest_record,
+    #             is_sorted=treat_as_sorted,
+    #             check_sorted=self.check_sorted,
+    #         )
+
     def _increment_stream_state(
         self,
         latest_record: types.Record,
         *,
         context: types.Context | None = None,
     ) -> None:
-        """Update state of stream or partition with data from the provided record.
-
-        Raises `InvalidStreamSortException` is `self.is_sorted = True` and unsorted data
-        is detected.
-
-        Note: The default implementation does not advance any bookmarks unless
-        `self.replication_method == 'INCREMENTAL'.
-
-        Args:
-            latest_record: TODO
-            context: Stream partition or context dictionary.
-
-        Raises:
-            ValueError: TODO
-        """
         # This also creates a state entry if one does not yet exist:
         state_dict = self.get_context_state(context)
 
+        # hack the state to be a special state
+        id_column_name = self._get_id_column_name()
+        replication_key_value = to_json_compatible(latest_record[self.replication_key])
+        id_value = to_json_compatible(latest_record[id_column_name])
+        
+        latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
+
         # Advance state bookmark values if applicable
-        if latest_record and self.replication_method == "INCREMENTAL":
+        if latest_record and self.replication_method == 'INCREMENTAL':
             if not self.replication_key:
                 msg = (
                     f"Could not detect replication key for '{self.name}' "
@@ -370,41 +410,6 @@ class PostgresStream(SQLStream):
                 is_sorted=treat_as_sorted,
                 check_sorted=self.check_sorted,
             )
-
-    # def _increment_stream_state(
-    #     self,
-    #     latest_record: dict[str, t.Any],
-    #     *,
-    #     context: Context | None = None,
-    # ) -> None:
-    #     # This also creates a state entry if one does not yet exist:
-    #     state_dict = self.get_context_state(context)
-
-    #     # hack the state to be a special state
-    #     replication_key_value = to_json_compatible(latest_record[self.replication_key])
-    #     id_value = to_json_compatible(latest_record['id'])
-        
-    #     latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
-
-    #     # Advance state bookmark values if applicable
-    #     if latest_record and self.replication_method == 'INCREMENTAL':
-    #         if not self.replication_key:
-    #             msg = (
-    #                 f"Could not detect replication key for '{self.name}' "
-    #                 f"stream(replication method={self.replication_method})"
-    #             )
-    #             raise ValueError(msg)
-    #         treat_as_sorted = self.is_sorted
-    #         if not treat_as_sorted and self.state_partitioning_keys is not None:
-    #             # Streams with custom state partitioning are not resumable.
-    #             treat_as_sorted = False
-    #         increment_state(
-    #             state_dict,
-    #             replication_key=self.replication_key,
-    #             latest_record=latest_record,
-    #             is_sorted=treat_as_sorted,
-    #             check_sorted=self.check_sorted,
-    #         )
 
 
 class PostgresLogBasedStream(SQLStream):
