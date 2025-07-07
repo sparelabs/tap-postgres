@@ -362,6 +362,7 @@ class PostgresStream(SQLStream):
             if not treat_as_sorted and self.state_partitioning_keys is not None:
                 # Streams with custom state partitioning are not resumable.
                 treat_as_sorted = False
+            self.logger.info(f"Incrementing state for {self.name} with record {latest_record}")
             increment_state(
                 state_dict,
                 replication_key=self.replication_key,
