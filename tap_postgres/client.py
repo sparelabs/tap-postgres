@@ -292,9 +292,6 @@ class PostgresStream(SQLStream):
 
             replication_key_value, last_id = self._parse_state(start_val)
 
-            self.logger.info(f"original value: {start_val}")
-            self.logger.info(f"Replication key value: {replication_key_value}, Last ID: {last_id}")
-
             if last_id is not None and replication_key_value is not None:
                 # Use tuple comparison for more efficient pagination
                 query = query.where(
@@ -321,10 +318,6 @@ class PostgresStream(SQLStream):
             query = query.limit(self.max_record_count())
 
         with self.connector._connect() as conn:
-            if self.name == 'public-CancellationReason':
-                queryResult = conn.execute(query).mappings()
-                # self.logger.info(f"queryResult: {queryResult}")
-                self.logger.info(f"query: {str(query)}")
             for record in conn.execute(query).mappings():
                 # TODO: Standardize record mapping type
                 # https://github.com/meltano/sdk/issues/2096
@@ -333,51 +326,6 @@ class PostgresStream(SQLStream):
                     # Record filtered out during post_process()
                     continue
                 yield transformed_record
-
-    # def _increment_stream_state(
-    #     self,
-    #     latest_record: types.Record,
-    #     *,
-    #     context: types.Context | None = None,
-    # ) -> None:
-    #     """Update state of stream or partition with data from the provided record.
-
-    #     Raises `InvalidStreamSortException` is `self.is_sorted = True` and unsorted data
-    #     is detected.
-
-    #     Note: The default implementation does not advance any bookmarks unless
-    #     `self.replication_method == 'INCREMENTAL'.
-
-    #     Args:
-    #         latest_record: TODO
-    #         context: Stream partition or context dictionary.
-
-    #     Raises:
-    #         ValueError: TODO
-    #     """
-    #     # This also creates a state entry if one does not yet exist:
-    #     state_dict = self.get_context_state(context)
-
-    #     # Advance state bookmark values if applicable
-    #     if latest_record and self.replication_method == "INCREMENTAL":
-    #         if not self.replication_key:
-    #             msg = (
-    #                 f"Could not detect replication key for '{self.name}' "
-    #                 f"stream(replication method={self.replication_method})"
-    #             )
-    #             raise ValueError(msg)
-    #         treat_as_sorted = self.is_sorted
-    #         if not treat_as_sorted and self.state_partitioning_keys is not None:
-    #             # Streams with custom state partitioning are not resumable.
-    #             treat_as_sorted = False
-    #         self.logger.info(f"Incrementing state for {self.name} with record {latest_record}")
-    #         increment_state(
-    #             state_dict,
-    #             replication_key=self.replication_key,
-    #             latest_record=latest_record,
-    #             is_sorted=treat_as_sorted,
-    #             check_sorted=self.check_sorted,
-    #         )
 
     def _increment_stream_state(
         self,
@@ -433,15 +381,13 @@ class PostgresStream(SQLStream):
         Returns:
             The most recent value between the bookmark and start date.
         """
-        parsed_value, last_id = self._parse_state(value)
+        parsed_value, _ = self._parse_state(value)
 
         self.logger.info(f"value: {value}, parsed_value: {parsed_value}, start_date_value: {start_date_value}")
 
-        # If parsed_value is greater than start_date_value, return the entire value
-        # to preserve the ID information for smart pagination
         if parsed_value is not None and start_date_value is not None:
             if self._parse_datetime(parsed_value) > self._parse_datetime(start_date_value):
-                return value  # Return entire value including ID
+                return value  # We want to return the entire value including the Id. This value is what is used in the state.
             else:
                 return start_date_value
         
