@@ -384,7 +384,7 @@ class PostgresStream(SQLStream):
         parsed_value, _ = self._parse_state(value)
 
         if parsed_value is not None and start_date_value is not None:
-            if self._parse_datetime(parsed_value) > self._parse_datetime(start_date_value):
+            if self._parse_datetime(parsed_value) >= self._parse_datetime(start_date_value):
                 return value  # We want to return the entire value including the Id. This value is what is used when building the query to fetch the records.
             else:
                 return start_date_value
