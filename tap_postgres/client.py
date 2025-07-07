@@ -292,6 +292,7 @@ class PostgresStream(SQLStream):
 
             replication_key_value, last_id = self._parse_state(start_val)
 
+            self.logger.info(f"original value: {start_val}")
             self.logger.info(f"Replication key value: {replication_key_value}, Last ID: {last_id}")
 
             if last_id is not None and replication_key_value is not None:
