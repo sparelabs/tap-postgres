@@ -437,7 +437,16 @@ class PostgresStream(SQLStream):
 
         self.logger.info(f"value: {value}, parsed_value: {parsed_value}, start_date_value: {start_date_value}")
 
-        return max(parsed_value, start_date_value)
+        # If parsed_value is greater than start_date_value, return the entire value
+        # to preserve the ID information for smart pagination
+        if parsed_value is not None and start_date_value is not None:
+            if self._parse_datetime(parsed_value) > self._parse_datetime(start_date_value):
+                return value  # Return entire value including ID
+            else:
+                return start_date_value
+        
+        # fallback to original implementation
+        return max(parsed_value, start_date_value, key=self._parse_datetime)
 
 class PostgresLogBasedStream(SQLStream):
     """Stream class for Postgres log-based streams."""
