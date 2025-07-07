@@ -228,7 +228,7 @@ class PostgresStream(SQLStream):
         
         return state_value, None
     
-    def _get_id_column(self, table) -> sa.Column | None:
+    def _get_id_column(self, table) -> sa.Column:
         """Get the ID column for secondary ordering.
         
         Args:
@@ -237,20 +237,14 @@ class PostgresStream(SQLStream):
         Returns:
             ID column or None if not found
         """
-        # Try common ID column names
-        id_column_names = ['id', 'ID', 'Id', '_id', 'pk', 'guid', 'uuid']
-        
-        for col_name in id_column_names:
-            if col_name in table.columns:
-                return table.columns[col_name]
-        
-        # If no common ID column found, try to find primary key
-        primary_key_cols = list(table.primary_key.columns)
-        if len(primary_key_cols) == 1:
-            return primary_key_cols[0]
-        
-        # throw error if no id column found
-        raise ValueError(f"No suitable ID column found for table {self.fully_qualified_name}. Special state pagination may not work correctly.")
+        id_column_name = self.config.get("replication_tie_breaker_column") or 'id'
+
+        table_column = table.columns.get(id_column_name)
+
+        if table_column is None:
+            raise ValueError(f"No suitable ID column found for table {self.fully_qualified_name}. Special state pagination may not work correctly.")
+
+        return table_column
 
     # Get records from stream
     def get_records(self, context: Context | None) -> t.Iterable[dict[str, t.Any]]:
@@ -297,9 +291,13 @@ class PostgresStream(SQLStream):
 
             self.logger.info(f"Replication key value: {replication_key_value}, Last ID: {last_id}")
 
-            if last_id is not None:
-                query = query.where(id_column > last_id)
-            if start_val:
+            if last_id is not None and replication_key_value is not None:
+                # Use tuple comparison for more efficient pagination
+                query = query.where(
+                    sa.tuple_(replication_key_col, id_column) > sa.tuple_(replication_key_value, last_id)
+                )
+            elif replication_key_value is not None:
+                # Fallback to simple replication key comparison if no last_id
                 query = query.where(replication_key_col >= replication_key_value)
             if end_val is not None:
                 query = query.where(replication_key_col <= end_val)
@@ -330,28 +328,30 @@ class PostgresStream(SQLStream):
 
     def _increment_stream_state(
         self,
-        latest_record: dict[str, t.Any],
+        latest_record: types.Record,
         *,
-        context: Context | None = None,
+        context: types.Context | None = None,
     ) -> None:
+        """Update state of stream or partition with data from the provided record.
+
+        Raises `InvalidStreamSortException` is `self.is_sorted = True` and unsorted data
+        is detected.
+
+        Note: The default implementation does not advance any bookmarks unless
+        `self.replication_method == 'INCREMENTAL'.
+
+        Args:
+            latest_record: TODO
+            context: Stream partition or context dictionary.
+
+        Raises:
+            ValueError: TODO
+        """
         # This also creates a state entry if one does not yet exist:
         state_dict = self.get_context_state(context)
 
-        selected_column_names = self.get_selected_schema()["properties"].keys()
-        table = self.connector.get_table(
-            full_table_name=self.fully_qualified_name,
-            column_names=selected_column_names,
-        )
-        id_column = self._get_id_column(table)
-
-        # hack the state to be a special state
-        replication_key_value = to_json_compatible(latest_record[self.replication_key])
-        id_value = to_json_compatible(latest_record[id_column.name])
-        
-        latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
-
         # Advance state bookmark values if applicable
-        if latest_record and self.replication_method == 'INCREMENTAL':
+        if latest_record and self.replication_method == "INCREMENTAL":
             if not self.replication_key:
                 msg = (
                     f"Could not detect replication key for '{self.name}' "
@@ -369,6 +369,41 @@ class PostgresStream(SQLStream):
                 is_sorted=treat_as_sorted,
                 check_sorted=self.check_sorted,
             )
+
+    # def _increment_stream_state(
+    #     self,
+    #     latest_record: dict[str, t.Any],
+    #     *,
+    #     context: Context | None = None,
+    # ) -> None:
+    #     # This also creates a state entry if one does not yet exist:
+    #     state_dict = self.get_context_state(context)
+
+    #     # hack the state to be a special state
+    #     replication_key_value = to_json_compatible(latest_record[self.replication_key])
+    #     id_value = to_json_compatible(latest_record['id'])
+        
+    #     latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
+
+    #     # Advance state bookmark values if applicable
+    #     if latest_record and self.replication_method == 'INCREMENTAL':
+    #         if not self.replication_key:
+    #             msg = (
+    #                 f"Could not detect replication key for '{self.name}' "
+    #                 f"stream(replication method={self.replication_method})"
+    #             )
+    #             raise ValueError(msg)
+    #         treat_as_sorted = self.is_sorted
+    #         if not treat_as_sorted and self.state_partitioning_keys is not None:
+    #             # Streams with custom state partitioning are not resumable.
+    #             treat_as_sorted = False
+    #         increment_state(
+    #             state_dict,
+    #             replication_key=self.replication_key,
+    #             latest_record=latest_record,
+    #             is_sorted=treat_as_sorted,
+    #             check_sorted=self.check_sorted,
+    #         )
 
 
 class PostgresLogBasedStream(SQLStream):
