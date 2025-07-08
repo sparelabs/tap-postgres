@@ -339,19 +339,19 @@ class PostgresStream(SQLStream):
         # This also creates a state entry if one does not yet exist:
         state_dict = self.get_context_state(context)
 
-        # hack the state to be a special state
-        id_column_name = self._get_id_column_name()
-        replication_key_value = to_json_compatible(latest_record[self.replication_key])
-        id_value = to_json_compatible(latest_record[id_column_name])
-        
-        # Pad numeric IDs to ensure proper string comparison
-        if isinstance(id_value, (int, float)) or (isinstance(id_value, str) and id_value.isdigit()):
-            id_value = f"{int(id_value):020d}"  # Pad to 20 digits for consistent string comparison
-        
-        latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
-
         # Advance state bookmark values if applicable
         if latest_record and self.replication_method == 'INCREMENTAL':
+            # hack the state to be a special state
+            id_column_name = self._get_id_column_name()
+            replication_key_value = to_json_compatible(latest_record[self.replication_key])
+            id_value = to_json_compatible(latest_record[id_column_name])
+            
+            # Pad numeric IDs to ensure proper string comparison
+            if isinstance(id_value, (int, float)) or (isinstance(id_value, str) and id_value.isdigit()):
+                id_value = f"{int(id_value):020d}"  # Pad to 20 digits for consistent string comparison
+            
+            latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
+
             if not self.replication_key:
                 msg = (
                     f"Could not detect replication key for '{self.name}' "
