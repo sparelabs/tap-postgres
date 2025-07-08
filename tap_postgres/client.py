@@ -221,6 +221,9 @@ class PostgresStream(SQLStream):
         if self.SPECIAL_STATE_DELIMITER in state_value:
             try:
                 rk_value, last_id = state_value.rsplit(self.SPECIAL_STATE_DELIMITER, 1)
+                # Unpad numeric IDs back to original format
+                if last_id.isdigit() and len(last_id) == 20:
+                    last_id = str(int(last_id))
                 return rk_value, last_id
             except ValueError:
                 # if parsing fails, throw an error
@@ -340,6 +343,10 @@ class PostgresStream(SQLStream):
         id_column_name = self._get_id_column_name()
         replication_key_value = to_json_compatible(latest_record[self.replication_key])
         id_value = to_json_compatible(latest_record[id_column_name])
+        
+        # Pad numeric IDs to ensure proper string comparison
+        if isinstance(id_value, (int, float)) or (isinstance(id_value, str) and id_value.isdigit()):
+            id_value = f"{int(id_value):020d}"  # Pad to 20 digits for consistent string comparison
         
         latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
 

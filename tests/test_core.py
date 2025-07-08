@@ -59,9 +59,14 @@ def setup_test_table(table_name, sqlalchemy_url):
     with engine.begin() as conn:
         metadata_obj.create_all(conn)
         conn.execute(sa.text(f"TRUNCATE TABLE {table_name}"))
-        for _ in range(1000):
+        # Generate timestamps that work with smart pagination ordering
+        # Use incremental timestamps to ensure proper ordering
+        base_datetime = datetime.datetime(2022, 11, 1)
+        for i in range(1000):
+            # Add minutes to ensure monotonic increase with occasional duplicates
+            timestamp = base_datetime + datetime.timedelta(minutes=i // 10)
             insert = test_replication_key_table.insert().values(
-                updated_at=fake.date_between(date1, date2), name=fake.name()
+                updated_at=timestamp, name=fake.name()
             )
             conn.execute(insert)
 
