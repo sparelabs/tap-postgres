@@ -17,6 +17,7 @@ TABLE_NAME = "test_replication_key"
 SAMPLE_CONFIG = {
     "start_date": datetime.datetime(2022, 11, 1).isoformat(),
     "sqlalchemy_url": DB_SQLALCHEMY_URL,
+    "replication_tie_breaker_column": "id",
 }
 
 
@@ -54,7 +55,10 @@ def test_null_replication_key_with_start_date():
     greater than the start date should be synced.
     """
     table_name = "test_null_replication_key_with_start_date"
-    engine = sa.create_engine(SAMPLE_CONFIG["sqlalchemy_url"], future=True)
+    
+    modified_config = copy.deepcopy(SAMPLE_CONFIG)
+    modified_config["replication_tie_breaker_column"] = "data"
+    engine = sa.create_engine(modified_config["sqlalchemy_url"], future=True)
 
     metadata_obj = sa.MetaData()
     table = sa.Table(
@@ -76,7 +80,7 @@ def test_null_replication_key_with_start_date():
         conn.execute(insert)
         insert = table.insert().values(data="Zulu", updated_at=None)
         conn.execute(insert)
-    tap = TapPostgres(config=SAMPLE_CONFIG)
+    tap = TapPostgres(config=modified_config)
     tap_catalog = Catalog.from_dict(tap.catalog_dict)
     altered_table_name = f"{DB_SCHEMA_NAME}-{table_name}"
     for stream in tap_catalog.streams:
@@ -93,7 +97,7 @@ def test_null_replication_key_with_start_date():
 
     test_runner = TapTestRunner(
         tap_class=TapPostgres,
-        config=SAMPLE_CONFIG,
+        config=modified_config,
         catalog=tap_catalog,
     )
     test_runner.sync_all()
@@ -110,6 +114,7 @@ def test_null_replication_key_without_start_date():
 
     modified_config = copy.deepcopy(SAMPLE_CONFIG)
     modified_config["start_date"] = None
+    modified_config["replication_tie_breaker_column"] = "data"
     engine = sa.create_engine(modified_config["sqlalchemy_url"], future=True)
 
     metadata_obj = sa.MetaData()
@@ -165,6 +170,7 @@ def test_replication_key_buffer_seconds():
     # Create a config with a 300 second (5 minute) buffer
     modified_config = copy.deepcopy(SAMPLE_CONFIG)
     modified_config["replication_key_buffer_seconds"] = 300
+    modified_config["replication_tie_breaker_column"] = "data"
     
     engine = sa.create_engine(modified_config["sqlalchemy_url"], future=True)
 
@@ -233,6 +239,7 @@ def test_replication_key_buffer_seconds_disabled():
     
     # Use config without buffer setting
     modified_config = copy.deepcopy(SAMPLE_CONFIG)
+    modified_config["replication_tie_breaker_column"] = "data"
     
     engine = sa.create_engine(modified_config["sqlalchemy_url"], future=True)
 
@@ -303,6 +310,7 @@ def test_replication_key_buffer_seconds_with_pacific_timezone():
     # Create a config with a 300 second (5 minute) buffer
     modified_config = copy.deepcopy(SAMPLE_CONFIG)
     modified_config["replication_key_buffer_seconds"] = 300
+    modified_config["replication_tie_breaker_column"] = "data"
     
     engine = sa.create_engine(modified_config["sqlalchemy_url"], future=True)
 
