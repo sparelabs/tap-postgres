@@ -210,7 +210,6 @@ class PostgresStream(SQLStream):
         """Get or set the sync start time for this sync run."""
         if self._sync_start_time is None:
             self._sync_start_time = datetime.datetime.now(datetime.timezone.utc)
-            self.logger.info(f"Setting sync start time for stream {self.name}: {self._sync_start_time}")
         return self._sync_start_time
 
     def max_record_count(self) -> int | None:
