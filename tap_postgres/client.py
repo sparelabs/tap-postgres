@@ -410,7 +410,6 @@ class PostgresStream(SQLStream):
             try:
                 latest_record_time = self._parse_datetime(replication_key_value)
                 use_buffer_time = latest_record_time >= buffer_time
-                self.logger.info(f"using buffer time: {use_buffer_time}. Compared {latest_record_time} to {buffer_time}")
             except (ValueError, TypeError):
                 # If we can't parse as datetime, use special format
                 self.logger.warning(f"Could not parse replication key value {replication_key_value} as datetime for stream {self.name}")
