@@ -200,6 +200,19 @@ class PostgresStream(SQLStream):
     TYPE_CONFORMANCE_LEVEL = TypeConformanceLevel.ROOT_ONLY
 
     SPECIAL_STATE_DELIMITER = "||"
+    
+    def __init__(self, *args, **kwargs):
+        """Initialize the stream and set sync start time."""
+        super().__init__(*args, **kwargs)
+        self._sync_start_time = None
+    
+    def _get_sync_start_time(self) -> datetime.datetime:
+        """Get or set the sync start time for this sync run."""
+        if self._sync_start_time is None:
+            self._sync_start_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        self.logger.info(f"Sync start time: {self._sync_start_time} for stream {self.name}")
+        return self._sync_start_time
 
     def max_record_count(self) -> int | None:
         """Return the maximum number of records to fetch in a single query."""
@@ -305,10 +318,6 @@ class PostgresStream(SQLStream):
                 query = query.where(replication_key_col >= replication_key_value)
             if end_val is not None:
                 query = query.where(replication_key_col <= end_val)
-            if buffer_seconds is not None:
-                current_time = datetime.datetime.now(datetime.timezone.utc)
-                buffer_time = current_time - datetime.timedelta(seconds=buffer_seconds)
-                query = query.where(replication_key_col < buffer_time)
 
         if self.ABORT_AT_RECORD_COUNT is not None:
             # Limit record count to one greater than the abort threshold. This ensures
@@ -341,23 +350,15 @@ class PostgresStream(SQLStream):
 
         # Advance state bookmark values if applicable
         if latest_record and self.replication_method == 'INCREMENTAL':
-            # hack the state to be a special state
-            id_column_name = self._get_id_column_name()
-            replication_key_value = to_json_compatible(latest_record[self.replication_key])
-            id_value = to_json_compatible(latest_record[id_column_name])
-            
-            # Pad numeric IDs to ensure proper string comparison
-            if isinstance(id_value, (int, float)) or (isinstance(id_value, str) and id_value.isdigit()):
-                id_value = f"{int(id_value):020d}"  # Pad to 20 digits for consistent string comparison
-            
-            latest_record[self.replication_key] = f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
-
             if not self.replication_key:
                 msg = (
                     f"Could not detect replication key for '{self.name}' "
                     f"stream(replication method={self.replication_method})"
                 )
                 raise ValueError(msg)
+
+            latest_record[self.replication_key] = self._get_stream_state_value(latest_record)
+
             treat_as_sorted = self.is_sorted
             if not treat_as_sorted and self.state_partitioning_keys is not None:
                 # Streams with custom state partitioning are not resumable.
@@ -382,11 +383,12 @@ class PostgresStream(SQLStream):
         comparing the bookmark value to the start date.
 
         Args:
-            value: The replication key value.
+            value: The replication key value (may include ||id suffix or be a simple timestamp).
             start_date_value: The start date value from the config.
 
         Returns:
             The most recent value between the bookmark and start date.
+            Note: Returns the original format of 'value' if it's more recent.
         """
         parsed_value, _ = self._parse_state(value)
 
@@ -398,6 +400,33 @@ class PostgresStream(SQLStream):
         
         # fallback to original implementation
         return max(parsed_value, start_date_value, key=self._parse_datetime)
+    
+    def _get_stream_state_value(self, latest_record: dict[str, t.Any]) -> str:
+        replication_key_value = to_json_compatible(latest_record[self.replication_key])
+        buffer_seconds = self.config.get("replication_key_buffer_seconds")
+
+        buffer_time = None if buffer_seconds is None else self._get_sync_start_time() - datetime.timedelta(seconds=buffer_seconds) 
+
+        # Check if we should use buffer time (when caught up)
+        use_buffer_time = False
+        if buffer_time is not None:
+            try:
+                latest_record_time = self._parse_datetime(replication_key_value)
+                use_buffer_time = latest_record_time >= buffer_time
+            except (ValueError, TypeError):
+                # If we can't parse as datetime, use special format
+                pass
+
+        if use_buffer_time:
+            return buffer_time.isoformat()
+        else:
+            id_column_name = self._get_id_column_name()
+            id_value = to_json_compatible(latest_record[id_column_name])
+
+            if isinstance(id_value, (int, float)) or (isinstance(id_value, str) and id_value.isdigit()):
+                id_value = f"{int(id_value):020d}"  # Pad to 20 digits for consistent string comparison
+
+            return f"{replication_key_value}{self.SPECIAL_STATE_DELIMITER}{id_value}"
 
 class PostgresLogBasedStream(SQLStream):
     """Stream class for Postgres log-based streams."""
