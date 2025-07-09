@@ -210,8 +210,7 @@ class PostgresStream(SQLStream):
         """Get or set the sync start time for this sync run."""
         if self._sync_start_time is None:
             self._sync_start_time = datetime.datetime.now(datetime.timezone.utc)
-        
-        self.logger.info(f"Sync start time: {self._sync_start_time} for stream {self.name}")
+            self.logger.info(f"Setting sync start time for stream {self.name}: {self._sync_start_time}")
         return self._sync_start_time
 
     def max_record_count(self) -> int | None:
@@ -304,7 +303,6 @@ class PostgresStream(SQLStream):
 
             start_val = self.get_starting_replication_key_value(context)
             end_val = self.config.get("end_date")
-            buffer_seconds = self.config.get("replication_key_buffer_seconds")
 
             replication_key_value, last_id = self._parse_state(start_val)
 
@@ -413,8 +411,10 @@ class PostgresStream(SQLStream):
             try:
                 latest_record_time = self._parse_datetime(replication_key_value)
                 use_buffer_time = latest_record_time >= buffer_time
+                self.logger.info(f"using buffer time: {use_buffer_time}. Compared {latest_record_time} to {buffer_time}")
             except (ValueError, TypeError):
                 # If we can't parse as datetime, use special format
+                self.logger.warning(f"Could not parse replication key value {replication_key_value} as datetime for stream {self.name}")
                 pass
 
         if use_buffer_time:
