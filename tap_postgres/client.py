@@ -365,8 +365,8 @@ class PostgresStream(SQLStream):
                 state_dict,
                 replication_key=self.replication_key,
                 latest_record=latest_record,
-                is_sorted=treat_as_sorted,
-                check_sorted=self.check_sorted,
+                is_sorted=False,
+                check_sorted=False,
             )
 
     def compare_start_date(self, value: str, start_date_value: str) -> str:
