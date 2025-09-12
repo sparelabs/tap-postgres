@@ -365,6 +365,26 @@ class TapPostgres(SQLTap):
             description=(
                 "Optional column to use as a tie breaker when filtering records to avoid infinite loops"
             ),
+        ),
+        th.Property(
+            "custom_where_conditions",
+            th.ObjectType(),
+            description=(
+                "Optional custom WHERE conditions to apply to streams. "
+                "Format: {\"stream_name\": \"WHERE clause\"}. "
+                "Example: {\"users\": \"\\\"organizationId\\\" = 'abc_efg'\"} "
+                "These conditions will be combined with existing filters using AND."
+            ),
+        ),
+        th.Property(
+            "custom_joins",
+            th.ObjectType(),
+            description=(
+                "Optional custom JOIN clauses to apply to streams. "
+                "Format: {\"stream_name\": {\"type\": \"JOIN type\", \"table\": \"table_name\", \"on\": \"ON condition\"}}. "
+                "Example: {\"orders\": {\"type\": \"INNER JOIN\", \"table\": \"organizations\", \"on\": \"orders.\\\"organizationId\\\" = organizations.id\"}} "
+                "Multiple joins can be specified as an array of join objects."
+            ),
         )
     ).to_dict()
 

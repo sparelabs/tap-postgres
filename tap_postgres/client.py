@@ -291,7 +291,62 @@ class PostgresStream(SQLStream):
             full_table_name=self.fully_qualified_name,
             column_names=selected_column_names,
         )
-        query = table.select()
+        
+        # Check for custom joins
+        custom_joins = self.config.get("custom_joins", {})
+        stream_joins = custom_joins.get(self.name, [])
+        
+        # Ensure stream_joins is a list
+        if stream_joins and not isinstance(stream_joins, list):
+            stream_joins = [stream_joins]
+        
+        # Build the base query
+        if stream_joins:
+            # If we have joins, we need to build a more complex query
+            query = sa.select(*[table.c[col] for col in selected_column_names])
+            query = query.select_from(table)
+            
+            # Apply each join
+            for join_config in stream_joins:
+                if isinstance(join_config, dict):
+                    join_type = join_config.get("type", "INNER JOIN").upper()
+                    join_table_name = join_config.get("table")
+                    join_on = join_config.get("on")
+                    
+                    if join_table_name and join_on:
+                        # Get the join table
+                        join_table = self.connector.get_table(
+                            full_table_name=join_table_name,
+                            column_names=None,  # Get all columns for join table
+                        )
+                        
+                        # Apply the join based on type
+                        if "LEFT" in join_type:
+                            query = query.outerjoin(
+                                join_table,
+                                sa.text(join_on)
+                            )
+                        elif "RIGHT" in join_type:
+                            # SQLAlchemy doesn't have a direct right join, so we need to swap
+                            self.logger.warning(f"RIGHT JOIN not directly supported for stream {self.name}, using LEFT JOIN with swapped tables")
+                            query = query.outerjoin(
+                                join_table,
+                                sa.text(join_on)
+                            )
+                        elif "FULL" in join_type or "OUTER" in join_type:
+                            query = query.outerjoin(
+                                join_table,
+                                sa.text(join_on),
+                                full=True
+                            )
+                        else:  # Default to INNER JOIN
+                            query = query.join(
+                                join_table,
+                                sa.text(join_on)
+                            )
+        else:
+            # No joins, use simple select
+            query = table.select()
 
         if self.replication_key:
             id_column = self._get_id_column(table)
@@ -315,6 +370,15 @@ class PostgresStream(SQLStream):
                 query = query.where(replication_key_col >= replication_key_value)
             if end_val is not None:
                 query = query.where(replication_key_col <= end_val)
+
+        # Apply custom WHERE conditions
+        custom_where = self.config.get("custom_where_conditions", {})
+        stream_where = custom_where.get(self.name)
+        
+        if stream_where:
+            # Apply the custom WHERE clause using text()
+            query = query.where(sa.text(stream_where))
+            self.logger.info(f"Applied custom WHERE condition for stream {self.name}: {stream_where}")
 
         if self.ABORT_AT_RECORD_COUNT is not None:
             # Limit record count to one greater than the abort threshold. This ensures
@@ -496,7 +560,11 @@ class PostgresLogBasedStream(SQLStream):
             )
 
     def get_records(self, context: Context | None) -> Iterable[dict[str, t.Any]]:
-        """Return a generator of row-type dictionary objects."""
+        """Return a generator of row-type dictionary objects.
+        
+        Note: Custom joins and where clauses are not supported for log-based replication
+        streams as they read from the WAL logs directly rather than querying tables.
+        """
         status_interval = 5.0  # if no records in 5 seconds the tap can exit
         start_lsn = self.get_starting_replication_key_value(context=context)
         if start_lsn is None:
