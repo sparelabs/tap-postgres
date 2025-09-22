@@ -336,24 +336,29 @@ class PostgresStream(SQLStream):
             query = query.limit(self.max_record_count())
         
         # Generate and log the SQL query for debugging
-        try:
-            # Compile the query with literal binds to show actual values
-            compiled = query.compile(
-                dialect=postgresql.dialect(),
-                compile_kwargs={"literal_binds": True}
-            )
-            sql_string = str(compiled)
-            # Log for public-Request or any stream you're debugging
-            self._debug_log_for_stream(
-                f"Executing SQL query:\n{sql_string}",
-                level="info"
-            )
-        except Exception as e:
-            # Fallback if literal_binds fails (e.g., with certain parameter types)
-            self._debug_log_for_stream(
-                f"SQL query (without literal binds): {str(query)}",
-                level="info"
-            )
+        if self.name == 'public-Request':  # Only log for specific streams
+            try:
+                # Try to compile with literal binds first (shows actual values)
+                compiled = query.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True}
+                )
+                sql_string = str(compiled).replace('\n', ' ').strip()
+                self.logger.info(f"[{self.name}] SQL with literals: {sql_string}")
+            except Exception as e:
+                # Fallback to showing query with placeholders
+                try:
+                    compiled = query.compile(dialect=postgresql.dialect())
+                    sql_string = str(compiled).replace('\n', ' ').strip()
+                    # Also get the parameters
+                    params = compiled.params if hasattr(compiled, 'params') else {}
+                    self.logger.info(f"[{self.name}] SQL: {sql_string}")
+                    if params:
+                        self.logger.info(f"[{self.name}] SQL params: {params}")
+                except Exception as e2:
+                    # Final fallback - just show the query object
+                    self.logger.info(f"[{self.name}] Query object: {query}")
+                    self.logger.info(f"[{self.name}] Error compiling query: {e2}")
 
         with self.connector._connect() as conn:
             for record in conn.execute(query).mappings():
