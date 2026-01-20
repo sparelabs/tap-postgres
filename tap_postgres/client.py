@@ -243,6 +243,17 @@ class PostgresStream(SQLStream):
         return state_value, None
     
     def _get_id_column_name(self) -> str:
+        """Get the tie-breaker column name for this stream.
+        
+        Checks for stream-specific override first, then falls back to global setting,
+        then defaults to 'id'.
+        """
+        # Check for stream-specific override
+        per_stream_config = self.config.get("replication_tie_breaker_columns", {})
+        if self.name in per_stream_config:
+            return per_stream_config[self.name] or 'id'
+        
+        # Fall back to global setting or default
         return self.config.get("replication_tie_breaker_column") or 'id'
     
     def _get_id_column(self, table) -> sa.Column:

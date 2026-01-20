@@ -363,7 +363,17 @@ class TapPostgres(SQLTap):
             "replication_tie_breaker_column",
             th.StringType,
             description=(
-                "Optional column to use as a tie breaker when filtering records to avoid infinite loops"
+                "Optional column to use as a tie breaker when filtering records to avoid infinite loops. "
+                "This is the default for all streams. Use replication_tie_breaker_columns for per-stream overrides."
+            ),
+        ),
+        th.Property(
+            "replication_tie_breaker_columns",
+            th.ObjectType(),
+            description=(
+                "Optional per-stream tie breaker columns to override the default. "
+                "Format: {\"stream_name\": \"column_name\"}. "
+                "Example: {\"public-trip_items\": \"trip_item_id\", \"public-blocks\": \"block_uuid\"}"
             ),
         ),
         th.Property(
