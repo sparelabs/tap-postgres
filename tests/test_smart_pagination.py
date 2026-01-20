@@ -120,6 +120,147 @@ class TestSmartPaginationMethods:
         result = stream._get_id_column_name()
         assert result == "custom_id"
 
+    def test_get_id_column_name_per_stream_override(self):
+        """Test _get_id_column_name returns per-stream override when configured."""
+        custom_config = copy.deepcopy(SAMPLE_CONFIG)
+        custom_config["replication_tie_breaker_column"] = "default_id"
+        custom_config["replication_tie_breaker_columns"] = {
+            "test_stream": "stream_specific_id",
+            "other_stream": "other_id",
+        }
+        tap = TapPostgres(config=custom_config)
+        
+        # Stream with per-stream override
+        catalog_entry = {
+            "tap_stream_id": "test_stream",
+            "table_name": "test_stream",
+            "schema": {
+                "properties": {
+                    "stream_specific_id": {"type": "integer"},
+                    "updated_at": {"type": "string", "format": "date-time"},
+                }
+            },
+            "metadata": {}
+        }
+        stream = PostgresStream(
+            tap=tap,
+            catalog_entry=catalog_entry,
+            connector=tap.connector
+        )
+        result = stream._get_id_column_name()
+        assert result == "stream_specific_id"
+
+    def test_get_id_column_name_per_stream_falls_back_to_global(self):
+        """Test _get_id_column_name falls back to global when no per-stream override."""
+        custom_config = copy.deepcopy(SAMPLE_CONFIG)
+        custom_config["replication_tie_breaker_column"] = "global_id"
+        custom_config["replication_tie_breaker_columns"] = {
+            "other_stream": "other_id",
+        }
+        tap = TapPostgres(config=custom_config)
+        
+        # Stream without per-stream override should use global
+        catalog_entry = {
+            "tap_stream_id": "test_stream",
+            "table_name": "test_stream",
+            "schema": {
+                "properties": {
+                    "global_id": {"type": "integer"},
+                    "updated_at": {"type": "string", "format": "date-time"},
+                }
+            },
+            "metadata": {}
+        }
+        stream = PostgresStream(
+            tap=tap,
+            catalog_entry=catalog_entry,
+            connector=tap.connector
+        )
+        result = stream._get_id_column_name()
+        assert result == "global_id"
+
+    def test_get_id_column_name_per_stream_falls_back_to_default(self):
+        """Test _get_id_column_name falls back to 'id' when no overrides configured."""
+        custom_config = copy.deepcopy(SAMPLE_CONFIG)
+        custom_config["replication_tie_breaker_columns"] = {
+            "other_stream": "other_id",
+        }
+        tap = TapPostgres(config=custom_config)
+        
+        # Stream without any override should use default 'id'
+        catalog_entry = {
+            "tap_stream_id": "test_stream",
+            "table_name": "test_stream",
+            "schema": {
+                "properties": {
+                    "id": {"type": "integer"},
+                    "updated_at": {"type": "string", "format": "date-time"},
+                }
+            },
+            "metadata": {}
+        }
+        stream = PostgresStream(
+            tap=tap,
+            catalog_entry=catalog_entry,
+            connector=tap.connector
+        )
+        result = stream._get_id_column_name()
+        assert result == "id"
+
+    def test_get_id_column_name_per_stream_empty_value_falls_back(self):
+        """Test _get_id_column_name falls back to 'id' when per-stream value is empty."""
+        custom_config = copy.deepcopy(SAMPLE_CONFIG)
+        custom_config["replication_tie_breaker_columns"] = {
+            "test_stream": "",  # Empty string should fall back to 'id'
+        }
+        tap = TapPostgres(config=custom_config)
+        
+        catalog_entry = {
+            "tap_stream_id": "test_stream",
+            "table_name": "test_stream",
+            "schema": {
+                "properties": {
+                    "id": {"type": "integer"},
+                    "updated_at": {"type": "string", "format": "date-time"},
+                }
+            },
+            "metadata": {}
+        }
+        stream = PostgresStream(
+            tap=tap,
+            catalog_entry=catalog_entry,
+            connector=tap.connector
+        )
+        result = stream._get_id_column_name()
+        assert result == "id"
+
+    def test_get_id_column_name_per_stream_none_value_falls_back(self):
+        """Test _get_id_column_name falls back to 'id' when per-stream value is None."""
+        custom_config = copy.deepcopy(SAMPLE_CONFIG)
+        custom_config["replication_tie_breaker_columns"] = {
+            "test_stream": None,  # None should fall back to 'id'
+        }
+        tap = TapPostgres(config=custom_config)
+        
+        catalog_entry = {
+            "tap_stream_id": "test_stream",
+            "table_name": "test_stream",
+            "schema": {
+                "properties": {
+                    "id": {"type": "integer"},
+                    "updated_at": {"type": "string", "format": "date-time"},
+                }
+            },
+            "metadata": {}
+        }
+        stream = PostgresStream(
+            tap=tap,
+            catalog_entry=catalog_entry,
+            connector=tap.connector
+        )
+        result = stream._get_id_column_name()
+        assert result == "id"
+
     def test_get_id_column_success(self):
         """Test _get_id_column returns correct column."""
         # Create a mock table with an id column
